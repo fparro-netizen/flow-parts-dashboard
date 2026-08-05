@@ -7,6 +7,7 @@ chat_local.html
 
 # Colleagues' personal mobile numbers, learned from email signatures.
 work_numbers.txt
+work_people.txt
 
 __pycache__/
 *.pyc

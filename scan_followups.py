@@ -43,7 +43,11 @@ REQUEST_PATTERNS = [
     r"\bcan we\b", r"\blet me know\b", r"\bget back to me\b",
     r"\bfollow(?:ing)? up\b", r"\bany update\b", r"\bstatus on\b",
     r"\bwhen (?:can|will|do|are|is)\b", r"\bwhat(?:'s| is) the\b",
-    r"\bsend me\b", r"\bshare\b", r"\bforward\b", r"\bsign(?: off)?\b",
+    r"\bsend me\b", r"\bshare\b", r"\bsign(?: off)?\b",
+    # Only a request to forward something. A bare \bforward\b also matches
+    # "look forward to" and "move forward", which are idioms, not asks.
+    r"\b(?:can|could|would) you (?:please )?forward\b",
+    r"\bplease forward\b", r"\bneed you to forward\b",
     r"\bapprove\b", r"\bapproval\b", r"\breview\b", r"\bconfirm\b",
     r"\bthoughts\?", r"\bwaiting on\b", r"\bASAP\b", r"\bby (?:EOD|COB|Friday|Monday)\b",
     r"\bcall me\b", r"\bgive me a call\b", r"\bcheck on\b", r"\blook into\b",

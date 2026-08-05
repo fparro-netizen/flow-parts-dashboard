@@ -48,7 +48,63 @@ CHAT_DB = os.path.expanduser("~/Library/Messages/chat.db")
 # systems and nanoseconds since roughly macOS 10.13.
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 
-PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})")
+# Requires real phone punctuation and valid area/exchange codes (neither may
+# start with 0 or 1). A bare ten-digit run matches invoice and PO numbers,
+# which is how a harvest ends up "learning" 0000020388 as a colleague.
+PHONE_RE = re.compile(
+    r"(?:\+1[\s.-]?)?(?:\([2-9]\d{2}\)\s?|[2-9]\d{2}[\s.-])[2-9]\d{2}[\s.-]\d{4}")
+
+# Banks and 2FA services text from 5-6 digit short codes. Never a person.
+SHORTCODE_RE = re.compile(r"^\+?\d{3,6}$")
+
+
+def name_keys(full_name):
+    """
+    Candidate mail-account spellings for a person's name.
+
+    Contacts may say "Steven Young" while the company address is
+    syoung@flowauto.com, so match on the shape of the local part rather than
+    on the display name — that survives nicknames like Sonny for Steven.
+    """
+    parts = [p for p in re.split(r"\s+", (full_name or "").strip().lower()) if p]
+    parts = [re.sub(r"[^a-z]", "", p) for p in parts]
+    parts = [p for p in parts if p]
+    if len(parts) < 2:
+        return set()
+    first, last = parts[0], parts[-1]
+    return {f"{first[0]}{last}", f"{first}.{last}", f"{first}{last}",
+            f"{last}{first[0]}", f"{first}_{last}"}
+
+
+def harvest_work_people(domain, days=365):
+    """
+    Collect the local parts of every @domain address seen in the mail store.
+
+    Colleagues are identified by name rather than by phone number: someone
+    texts from a cell that appears in no signature, but their name is in
+    Contacts and their work address is all over the mailbox.
+    """
+    try:
+        from scan_followups import find_mail_root, read_emlx, decode
+    except Exception:
+        return {}
+    root = find_mail_root()
+    if not root:
+        return {}
+    import email.utils
+    people = {}
+    for path in glob.glob(os.path.join(root, "**", "*.emlx"), recursive=True):
+        if path.endswith(".partial.emlx"):
+            continue
+        msg = read_emlx(path)
+        if msg is None:
+            continue
+        for header in ("From", "To", "Cc"):
+            for _name, addr in email.utils.getaddresses([decode(msg.get(header, ""))]):
+                addr = (addr or "").lower()
+                if domain in addr and "@" in addr:
+                    people.setdefault(addr.split("@")[0], addr)
+    return people
 
 
 def norm_number(value):
@@ -67,15 +123,37 @@ def apple_time(raw):
         return None
 
 
+# In a typedstream a string is written as marker, then a length, then the
+# UTF-8 bytes. A length byte of 0x81 means the real length is the next two.
+NSSTRING_RE = re.compile(rb"NSString\x01\x94\x84\x01\+(.)", re.DOTALL)
+
+
 def decode_attributed_body(blob):
     """
     Recent macOS often leaves message.text NULL and stores the body in
     attributedBody, an NSAttributedString typedstream. There's no public
-    parser, so pull the longest run of readable text out of the archive.
-    Best-effort by nature: if it fails the message is simply skipped.
+    parser, so read the length prefix and take exactly that many bytes.
+
+    Reading the length matters. Scraping the longest printable run instead
+    leaves the length byte glued to the front whenever it happens to be
+    printable — that is where "FI can tomorrow" came from: 'F' is 0x46, the
+    70-byte length of the message following it.
     """
     if not blob:
         return None
+
+    match = NSSTRING_RE.search(blob)
+    if match:
+        start = match.end()
+        length = match.group(1)[0]
+        if length == 0x81:                       # two-byte little-endian length
+            length = int.from_bytes(blob[start:start + 2], "little")
+            start += 2
+        text = blob[start:start + length].decode("utf-8", errors="replace").strip()
+        if text:
+            return text
+
+    # Fallback for layouts the marker misses.
     try:
         raw = blob.decode("utf-8", errors="ignore")
     except Exception:
@@ -87,7 +165,12 @@ def decode_attributed_body(blob):
     if not runs:
         return None
     best = max(runs, key=len)
-    best = re.sub(r"^[\x00-\x1f+\x84\x81\x92\x86]*", "", best).strip()
+    best = re.sub(r"^[\x00-\x1f+\x84\x81\x92\x86]*", "", best)
+    # A leading character whose ordinal equals the remaining length is the
+    # length prefix, not the first letter of the message.
+    if len(best) > 1 and abs(ord(best[0]) - (len(best) - 1)) <= 2:
+        best = best[1:]
+    best = best.strip()
     for junk in ("NSDictionary", "NSNumber", "NSValue", "__kIM", "NSAttribute"):
         if junk in best:
             best = best.split(junk)[0].strip()
@@ -159,7 +242,7 @@ def harvest_work_numbers(domain, days=365):
         body = plain_text(msg, limit=6000)
         # Signatures live at the end; scan the tail to avoid quoted noise.
         for match in PHONE_RE.finditer(body[-2500:]):
-            key = norm_number("".join(match.groups()))
+            key = norm_number(match.group(0))
             if key:
                 found.setdefault(key, sender)
     return found
@@ -175,7 +258,7 @@ def open_db(path):
         sys.exit(f"Could not open {path}: {exc}")
 
 
-def scan(days, work_numbers, contacts, domain, only_work):
+def scan(days, work_numbers, contacts, domain, only_work, work_people=None):
     con = open_db(CHAT_DB)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
@@ -208,6 +291,8 @@ def scan(days, work_numbers, contacts, domain, only_work):
         if not body:
             continue
         who = handle or room or "(unknown)"
+        if SHORTCODE_RE.match(str(who).strip()):
+            continue                        # 2FA / marketing short code, not a person
 
         if is_me:
             results.pop(who, None)          # you answered — clear the thread
@@ -227,13 +312,23 @@ def scan(days, work_numbers, contacts, domain, only_work):
     items = []
     for who, rec in results.items():
         key = norm_number(who)
+        contact_name = contacts.get(key) if key else None
+        matched_person = None
+        if contact_name and work_people:
+            for candidate in name_keys(contact_name):
+                if candidate in work_people:
+                    matched_person = work_people[candidate]
+                    break
+
         if domain and "@" in who and domain in who.lower():
             source, is_work = who, True
+        elif matched_person:                    # Contacts name matches a colleague
+            source, is_work = matched_person, True
         elif key and key in work_numbers:
             source, is_work = work_numbers[key], True
         else:
             source, is_work = None, False
-        rec["name"] = contacts.get(key) if key else None
+        rec["name"] = contact_name
         rec["work_email"] = source
         rec["is_work"] = is_work
         if only_work and not is_work:
@@ -304,6 +399,8 @@ def main():
                     help="learn work numbers from email signatures (slow, cached)")
     ap.add_argument("--numbers", default="work_numbers.txt",
                     help="cache file of known work phone numbers")
+    ap.add_argument("--people", default="work_people.txt",
+                    help="cache file of colleague mail accounts")
     ap.add_argument("--out", default="texts_local.html")
     args = ap.parse_args()
 
@@ -316,17 +413,34 @@ def main():
                     key = norm_number(num)
                     if key:
                         work[key] = who or "known work contact"
+    people = {}
     if args.harvest:
-        print("Harvesting work numbers from email signatures (this takes a minute)...")
+        print("Reading the mail store to learn who your colleagues are "
+              "(this takes a minute)...")
+        people = harvest_work_people(args.domain.lower())
         work.update(harvest_work_numbers(args.domain.lower()))
         with open(args.numbers, "w", encoding="utf-8") as fh:
             fh.write("# number,source — learned from @%s signatures\n" % args.domain)
             for key, who in sorted(work.items()):
                 fh.write(f"{key},{who}\n")
-        print(f"Learned {len(work)} work number(s) -> {args.numbers}")
+        with open(args.people, "w", encoding="utf-8") as fh:
+            fh.write("# account,address — @%s people seen in the mail store\n"
+                     % args.domain)
+            for local, addr in sorted(people.items()):
+                fh.write(f"{local},{addr}\n")
+        print(f"Learned {len(people)} colleague(s) and "
+              f"{len(work)} signature number(s)")
+    elif os.path.exists(args.people):
+        with open(args.people, encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip() and not line.startswith("#"):
+                    local, _, addr = line.strip().partition(",")
+                    if local:
+                        people[local] = addr or local
 
     contacts = load_contacts()
-    items = scan(args.days, work, contacts, args.domain.lower(), args.only_work)
+    items = scan(args.days, work, contacts, args.domain.lower(), args.only_work,
+                 people)
 
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(render_html(items, args.days))
@@ -334,7 +448,8 @@ def main():
     known = [r for r in items if r["is_work"]]
     unknown = [r for r in items if not r["is_work"]]
     print(f"{len(items)} unanswered request(s) by text "
-          f"({len(contacts)} contacts, {len(work)} known work numbers)\n")
+          f"({len(contacts)} contacts, {len(people)} colleagues, "
+          f"{len(work)} signature numbers)\n")
 
     def show(rows):
         for r in rows:
