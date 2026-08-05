@@ -102,13 +102,14 @@
         <div class="panel warn">
             <h2>Why it's empty — activate the feed</h2>
             <p>A 12-month scan of <code>fparro@gmail.com</code> found <strong>no inbound requests from @flowauto.com colleagues</strong>. That's expected: your work requests go to <code>FPARRO@flowauto.com</code>, which you read in Apple Mail. Apple Mail is a viewer running on your Mac — the automation runs in the cloud and can't see it. So the mail has to be reached at the <em>server</em>, not on your Mac.</p>
-            <p>Pick <strong>one</strong> of these. Option A is cleaner; Option B always works.</p>
+            <p><strong>Forwarding is the only route.</strong> Connecting the work account directly was ruled out: Claude holds a single Gmail connection and it's bound to <code>fparro@gmail.com</code> — there's no second slot, and freeing it would break the Gmail cleanup, Freshdesk check-request, and morning-brief routines that run on the personal account.</p>
             <ul class="steps">
-                <li><strong>Option A — connect the work account directly.</strong> If Flow Auto runs Google Workspace (very likely, since the team uses Google Chat), add <code>FPARRO@flowauto.com</code> as a second Gmail connector in Claude's connector settings. The sweep then reads work mail at the source — nothing forwarded, nothing duplicated. <em>Possible snag:</em> many company Workspace admins block third-party apps, so this may be refused by IT.</li>
-                <li><strong>Option B — forward work mail to this Gmail.</strong> Sign in to your work mail on the web (not Apple Mail) → Settings → Forwarding and POP/IMAP → add <code>fparro@gmail.com</code> → confirm. Then Filters → new filter on <code>to:fparro@flowauto.com</code> → "Forward it to" your gmail. Server-side forwarding keeps running whether or not your Mac is on.</li>
-                <li><strong>Then — turn on Google Chat email notifications.</strong> Chat/Gmail → Settings → Chat and Meet → notifications → email for direct messages &amp; @-mentions. This is the only way Chat asks reach the tracker.</li>
+                <li><strong>Forward work mail to this Gmail.</strong> Sign in to your work mail <em>on the web</em> — not Apple Mail — then Settings → Forwarding and POP/IMAP → "Add a forwarding address" → <code>fparro@gmail.com</code>. (Outlook/Exchange instead: Settings → Mail → Forwarding.)</li>
+                <li><strong>Confirm the address.</strong> Google emails a confirmation code to <code>fparro@gmail.com</code>. That's a mailbox the automation can read, so the code can be retrieved and handed back to you.</li>
+                <li><strong>Forward everything addressed to you.</strong> Back in work-mail Settings → Filters → new filter on <code>to:fparro@flowauto.com</code> → "Forward it to" your gmail. Server-side, so it runs whether or not your Mac is on.</li>
+                <li><strong>Turn on Google Chat email notifications.</strong> Chat/Gmail → Settings → Chat and Meet → notifications → email for direct messages &amp; @-mentions. This is the only way Chat asks reach the tracker.</li>
             </ul>
-            <p class="muted" style="margin-top:12px;">Don't set up a forwarding rule inside Apple Mail — those only fire while Mail.app is open on your Mac. Do it server-side.</p>
+            <p class="muted" style="margin-top:12px;">Don't build the rule inside Apple Mail — those only fire while Mail.app is open on your Mac. It has to be server-side.</p>
             <p class="muted">Once mail starts flowing in, the next 8 AM / 3 PM sweep populates this page and starts the digests automatically — no further action needed.</p>
         </div>
 
