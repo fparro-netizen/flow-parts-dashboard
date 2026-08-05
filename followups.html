@@ -46,25 +46,25 @@
             <h1>Work Follow-Ups — Flow Auto</h1>
             <div class="header-info">
                 <div><span>Tracks requests from <strong>@flowauto.com</strong> people that need a reply from you</span></div>
-                <div><span>Sweeps: <strong>8:00 AM &amp; 3:00 PM ET, weekdays</strong></span></div>
+                <div><span>Source: <strong>Apple Mail on your Mac</strong> · run twice a weekday</span></div>
             </div>
         </header>
 
         <div class="summary-cards">
             <div class="card">
                 <h3>Open Follow-Ups</h3>
-                <div class="metric-value">0</div>
-                <div class="metric-sub">In fparro@gmail.com right now</div>
+                <div class="metric-value">—</div>
+                <div class="metric-sub">Populated when the scan runs on your Mac</div>
             </div>
             <div class="card">
                 <h3>Overdue (&gt;2 days)</h3>
-                <div class="metric-value">0</div>
+                <div class="metric-value">—</div>
                 <div class="metric-sub">Waiting on your reply</div>
             </div>
             <div class="card">
-                <h3>Last Swept</h3>
-                <div class="metric-value" style="font-size:1.3em;">Setup</div>
-                <div class="metric-sub">Monitor being scheduled</div>
+                <h3>Status</h3>
+                <div class="metric-value" style="font-size:1.3em;">Ready to run</div>
+                <div class="metric-sub">Scanner built &amp; tested</div>
             </div>
         </div>
 
@@ -75,15 +75,16 @@
                     <tr><th>Who</th><th>What they asked</th><th>When</th><th>Age</th><th>Channel</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td colspan="5" class="empty">No open requests from @flowauto.com people in this inbox yet. See "Why it's empty" below — your work mail needs to be funneled here first.</td></tr>
+                    <tr><td colspan="5" class="empty">This page is the plan, not the live list. Running <code>scan_followups.py</code> on your Mac writes the real one to <code>followups_local.html</code>.</td></tr>
                 </tbody>
             </table>
-            <p class="muted" style="margin-top:14px;">The live list also lives in your Gmail under the <strong>⏳ Follow Up</strong> label. Reply to an email and it drops off on the next sweep.</p>
         </div>
 
         <div class="panel how">
             <h2>How the monitor works</h2>
-            <p>Twice a weekday (8 AM &amp; 3 PM Eastern) an automated sweep reads your Gmail, finds messages from <strong>@flowauto.com</strong> colleagues that are asking you to do something and that you haven't replied to, tags them with a <strong>⏳ Follow Up</strong> label, and emails you a short digest so it hits your phone. This page shows the current snapshot.</p>
+            <p>The scanner runs <strong>on your Mac</strong>, where Apple Mail has already downloaded your work mail to <code>~/Library/Mail</code>. It reads that local store, keeps messages from <strong>@flowauto.com</strong> colleagues that actually ask you for something, drops the ones you've already replied to, and writes a ranked list — oldest first, anything past two days flagged.</p>
+            <p>Nothing is forwarded, no credentials are used, and nothing touches the network. It reads files already sitting on your disk, which is why IT's forwarding block doesn't apply.</p>
+            <p class="muted">Known robots are filtered out — <code>pbidata@flowauto.com</code>'s daily Fixed Ops blast says "please see attached" every morning and never wants an answer.</p>
         </div>
 
         <div class="panel">
@@ -92,7 +93,7 @@
                 <thead><tr><th>Channel</th><th>Status</th><th>Detail</th></tr></thead>
                 <tbody>
                     <tr><td>Personal email<br><span class="muted">fparro@gmail.com</span></td><td><span class="chip chip-ok">Monitored</span></td><td>Fully covered — this is the mailbox the sweep reads today.</td></tr>
-                    <tr><td>Work email<br><span class="muted">FPARRO@flowauto.com</span></td><td><span class="chip chip-warn">Needs setup</span></td><td>Where your actual requests arrive. Read in Apple Mail on your Mac — but Apple Mail is only a viewer, and the automation can't reach your Mac. The mail itself lives on Flow Auto's server, which <em>is</em> reachable. See below.</td></tr>
+                    <tr><td>Work email<br><span class="muted">FPARRO@flowauto.com</span></td><td><span class="chip chip-ok">Covered locally</span></td><td>Where your actual requests arrive. Unreachable from the cloud (no second connector slot; IT blocks forwarding) — but Apple Mail has already downloaded it all to this Mac, so the local scanner reads it there.</td></tr>
                     <tr><td>Google Chat</td><td><span class="chip chip-warn">Needs setup</span></td><td>Can't be read directly — no Google Chat connector exists. (The old Gmail <code>CHAT</code> label was checked: it holds only legacy Hangouts chats from ~2012, nothing current.) Turn on Chat <em>email notifications</em> so those land in a mailbox the sweep reads.</td></tr>
                     <tr><td>Text / SMS</td><td><span class="chip chip-off">Not available</span></td><td>Phone texts can't be read or sent — no SMS access exists here. Your phone-side nudge is the digest email (and optional Calendar reminders).</td></tr>
                 </tbody>
@@ -100,16 +101,17 @@
         </div>
 
         <div class="panel warn">
-            <h2>Why it's empty — activate the feed</h2>
-            <p>A 12-month scan of <code>fparro@gmail.com</code> found <strong>no inbound requests from @flowauto.com colleagues</strong>. That's expected: your work requests go to <code>FPARRO@flowauto.com</code>, which you read in Apple Mail. Apple Mail is a viewer running on your Mac — the automation runs in the cloud and can't see it. So the mail has to be reached at the <em>server</em>, not on your Mac.</p>
-            <p><strong>Forwarding is the only route.</strong> Connecting the work account directly was ruled out: Claude holds a single Gmail connection and it's bound to <code>fparro@gmail.com</code> — there's no second slot, and freeing it would break the Gmail cleanup, Freshdesk check-request, and morning-brief routines that run on the personal account.</p>
+            <h2>Why the cloud can't do this — and what does</h2>
+            <p>A 12-month scan of <code>fparro@gmail.com</code> found <strong>no inbound requests from @flowauto.com colleagues</strong>. That's expected: your work requests go to <code>FPARRO@flowauto.com</code>, which you read in Apple Mail on your Mac. A cloud session has no route to your Mac's disk, and outbound network there is locked down — so the work mailbox is invisible from the cloud no matter how it's approached.</p>
+            <p><strong>Both cloud routes are closed.</strong> Connecting the work account directly: Claude holds a single Gmail connection, already bound to <code>fparro@gmail.com</code>, with no second slot — and freeing it would break the Gmail cleanup, Freshdesk check-request, and morning-brief routines. Forwarding: blocked by Flow Auto IT, and not up for negotiation.</p>
+            <p><strong>The route that works runs on the Mac instead.</strong> Apple Mail has already downloaded every message to <code>~/Library/Mail</code>. Read it there and nothing is forwarded, no credentials are handed over, and no data leaves the machine — so there is nothing for IT to approve.</p>
             <ul class="steps">
-                <li><strong>Forward work mail to this Gmail.</strong> Sign in to your work mail <em>on the web</em> — not Apple Mail — then Settings → Forwarding and POP/IMAP → "Add a forwarding address" → <code>fparro@gmail.com</code>. (Outlook/Exchange instead: Settings → Mail → Forwarding.)</li>
-                <li><strong>Confirm the address.</strong> Google emails a confirmation code to <code>fparro@gmail.com</code>. That's a mailbox the automation can read, so the code can be retrieved and handed back to you.</li>
-                <li><strong>Forward everything addressed to you.</strong> Back in work-mail Settings → Filters → new filter on <code>to:fparro@flowauto.com</code> → "Forward it to" your gmail. Server-side, so it runs whether or not your Mac is on.</li>
-                <li><strong>Turn on Google Chat email notifications.</strong> Chat/Gmail → Settings → Chat and Meet → notifications → email for direct messages &amp; @-mentions. This is the only way Chat asks reach the tracker.</li>
+                <li><strong>Run <code>scan_followups.py</code> on the Mac</strong> (in this repo). It walks Apple Mail's local store, finds messages from <code>@flowauto.com</code> people that ask for something and that you haven't answered, and writes <code>followups_local.html</code> plus a terminal summary.</li>
+                <li><strong>Grant Full Disk Access</strong> if the scan reports it cannot read messages — macOS shields <code>~/Library/Mail</code> by default. System Settings → Privacy &amp; Security → Full Disk Access → enable for Terminal (or the Claude app).</li>
+                <li><strong>Schedule it twice a day</strong> once the output looks right, so the 8 AM / 3 PM rhythm happens without you thinking about it.</li>
+                <li><strong>Google Chat still needs email notifications on</strong> (Chat → Settings → Chat and Meet → email for DMs &amp; @-mentions). That turns Chat asks into mail, which Apple Mail downloads, which the scan then sees.</li>
             </ul>
-            <p class="muted" style="margin-top:12px;">Don't build the rule inside Apple Mail — those only fire while Mail.app is open on your Mac. It has to be server-side.</p>
+            <p class="muted" style="margin-top:12px;">Scanner output is gitignored on purpose — it holds real message content from a mailbox carrying a Flow Automotive confidentiality notice, so it stays on the Mac and out of this repo.</p>
             <p class="muted">Once mail starts flowing in, the next 8 AM / 3 PM sweep populates this page and starts the digests automatically — no further action needed.</p>
         </div>
 
