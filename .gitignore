@@ -2,6 +2,10 @@
 # from a mailbox whose messages carry a Flow Automotive confidentiality notice.
 # Stays on the Mac that generated it; never committed.
 followups_local.html
+texts_local.html
+
+# Colleagues' personal mobile numbers, learned from email signatures.
+work_numbers.txt
 
 __pycache__/
 *.pyc
