@@ -36,6 +36,10 @@ REQUEST_PATTERNS = [
     r"\bcan you\b", r"\bcould you\b", r"\bwould you\b", r"\bwill you\b",
     r"\bplease\b", r"\bpls\b",
     r"\bneed (?:you|your|this|that|a|an|the|to)\b", r"\bneeds? your\b",
+    # "I need access to the PASE dashboard" is the ask; the polite question
+    # that follows it is not. Catch the statement so it wins.
+    r"\b(?:I|we) (?:need|will need|would like|want|am asking)\b",
+    r"\b(?:I|we)'?d like\b", r"\bneed access\b", r"\brequesting\b",
     r"\bcan we\b", r"\blet me know\b", r"\bget back to me\b",
     r"\bfollow(?:ing)? up\b", r"\bany update\b", r"\bstatus on\b",
     r"\bwhen (?:can|will|do|are|is)\b", r"\bwhat(?:'s| is) the\b",
@@ -64,6 +68,64 @@ BOILERPLATE_RE = re.compile(
     r"please note|please see below|this electronic message transmission",
     re.IGNORECASE,
 )
+
+# Closing courtesies. These end almost every work email and are the single
+# biggest source of false hits — "please let me know if you have any
+# questions" is a goodbye, not a request.
+SIGNOFF_RE = re.compile(
+    r"(?:please )?(?:let me know|reach out|feel free|don'?t hesitate|"
+    r"give me a (?:call|shout))\b[^.?!]*"
+    r"(?:if you (?:have|need)|with any|any questions?|any concerns?|"
+    r"anything else|if there(?:'s| is) anything)[^.?!]*|"
+    r"thanks? (?:in advance|so much|again)|"
+    r"(?:any|if you have) (?:questions?|concerns?)[,.]? (?:please )?"
+    r"(?:let me know|call|contact|reach)[^.?!]*|"
+    r"happy to (?:help|discuss)|hope (?:this|that) helps",
+    re.IGNORECASE,
+)
+
+# Vacation responders and other machine-generated replies.
+AUTOREPLY_SUBJ_RE = re.compile(
+    r"^\s*(?:re:\s*)?(?:out of (?:the )?office|automatic reply|auto[-\s]?reply|"
+    r"autoreply|away from (?:my|the) (?:desk|office)|vacation reply|"
+    r"undeliverable|delivery status notification|read:)",
+    re.IGNORECASE,
+)
+
+
+def is_autoreply(msg, subject):
+    """Vacation responders announce themselves in headers or the subject."""
+    if AUTOREPLY_SUBJ_RE.search(subject or ""):
+        return True
+    if (msg.get("Auto-Submitted") or "").lower().startswith("auto"):
+        return True
+    for header in ("X-Autoreply", "X-Autorespond", "X-Auto-Response-Suppress"):
+        if msg.get(header):
+            return True
+    if (msg.get("Precedence") or "").lower() in {"bulk", "auto_reply", "junk"}:
+        return True
+    return False
+
+
+def unwrap(text):
+    """
+    Rejoin hard-wrapped lines before splitting into sentences.
+
+    Mail clients wrap bodies near 72 columns, so a single sentence often spans
+    several lines. Splitting on newlines then yields fragments like
+    "fee of $22.94 on the wrong belt molding we returned?" — a real question
+    with its opening clause chopped off. Join a line to the next when it
+    doesn't end at a sentence boundary.
+    """
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if out and stripped and not re.search(r"[.!?:;]$", out[-1]) \
+                and not re.match(r"^\s*[-*•>\d]", line):
+            out[-1] = out[-1] + " " + stripped
+        else:
+            out.append(stripped)
+    return "\n".join(out)
 
 
 def find_mail_root():
@@ -138,7 +200,7 @@ def plain_text(msg, limit=4000):
 def strip_quotes(text):
     """Drop quoted replies and signatures so we judge only what was newly written."""
     lines = []
-    for line in text.splitlines():
+    for line in unwrap(text).splitlines():
         s = line.strip()
         if s.startswith(">"):
             continue
@@ -149,37 +211,66 @@ def strip_quotes(text):
     return "\n".join(lines)
 
 
-def is_real_ask(subject, body):
-    """True when something is asked once mass-mail boilerplate is discounted."""
-    clean = BOILERPLATE_RE.sub(" ", strip_quotes(body))
-    subj = BOILERPLATE_RE.sub(" ", subject)
-    return bool(REQUEST_RE.search(clean) or REQUEST_RE.search(subj) or "?" in clean)
+def discount(text):
+    """Blank out phrases that look like requests but aren't."""
+    return SIGNOFF_RE.sub(" ", BOILERPLATE_RE.sub(" ", text))
 
 
-def first_ask(text):
+def addressed_to_other(sentence, me_names):
     """
-    The sentence that most looks like the actual request.
-    Boilerplate is discounted when judging, but the sentence is shown intact —
-    scoring on a stripped copy would print mangled half-sentences.
+    "Joe- you got this?" is a real question aimed at someone else.
+    A leading name followed by a dash, comma or colon is the giveaway.
     """
+    m = re.match(r"^\s*([A-Z][a-z]{1,14})\s*[-–,:]\s+\S", sentence)
+    if not m:
+        return None
+    name = m.group(1).lower()
+    if name in me_names or name in {"hi", "hey", "all", "team", "thanks"}:
+        return None
+    return m.group(1)
+
+
+def ask_sentences(text):
+    """Every sentence in the newly-written portion that reads as a request."""
     clean = strip_quotes(text)
+    found = []
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", clean):
         s = " ".join(sentence.split())
         if len(s) < 8 or len(s) > 300:
             continue
-        judged = BOILERPLATE_RE.sub(" ", s)
+        judged = discount(s)
+        if len(judged.strip()) < 8:
+            continue
         if REQUEST_RE.search(judged) or judged.rstrip().endswith("?"):
-            return s
-    for line in clean.splitlines():
-        s = " ".join(line.split())
-        if len(s) > 12:
-            return s[:220]
-    return "(no clear ask found — open the message)"
+            found.append(s)
+    return found
+
+
+def pick_ask(text, me_names):
+    """
+    The request to show, preferring one aimed at Frank over one aimed at a
+    colleague. Returns (sentence, other_name) — other_name set when every
+    candidate is addressed to somebody else.
+    """
+    found = ask_sentences(text)
+    if not found:
+        return None, None
+    deflected = []
+    for s in found:
+        other = addressed_to_other(s, me_names)
+        if other:
+            deflected.append((s, other))
+        else:
+            return s, None
+    return deflected[0][0], deflected[0][1]
 
 
 def scan(mail_root, domain, me, days, ignore=DEFAULT_IGNORE):
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     me_local = me.split("@")[0].lower()
+    # First names you might be addressed by, so "Frank- can you..." isn't read
+    # as a request aimed at somebody else.
+    me_names = {me_local, "frank", "francis", "parro"}
 
     candidates = {}   # message-id -> record
     replied_refs = set()   # message-ids Frank has answered
@@ -224,9 +315,17 @@ def scan(mail_root, domain, me, days, ignore=DEFAULT_IGNORE):
             continue
 
         subject = decode(msg.get("Subject", "(no subject)"))
-        body = plain_text(msg)
-        if not is_real_ask(subject, body):
+        if is_autoreply(msg, subject):
             continue
+
+        body = plain_text(msg)
+        ask, other = pick_ask(body, me_names)
+        if not ask:
+            continue
+
+        # Addressed straight to you, or merely copied on someone else's thread.
+        to_field = (msg.get("To") or "").lower()
+        direct = me_local in to_field
 
         key = msg_id or f"{sender_addr}|{subject}|{dt.isoformat()}"
         prior = candidates.get(key)
@@ -237,13 +336,16 @@ def scan(mail_root, domain, me, days, ignore=DEFAULT_IGNORE):
             "who": decode(msg.get("From", "")) or sender_addr,
             "addr": sender_addr,
             "subject": subject or "(no subject)",
-            "ask": first_ask(body),
+            "ask": ask,
+            "for_other": other,
+            "direct": direct,
             "dt": dt,
         }
 
     open_items = [r for k, r in candidates.items()
                   if not (r["id"] and r["id"] in replied_refs)]
-    open_items.sort(key=lambda r: r["dt"])
+    # Addressed to you first, then asks aimed at a colleague, oldest within each.
+    open_items.sort(key=lambda r: (not r["direct"], bool(r["for_other"]), r["dt"]))
     return len(paths), open_items
 
 
@@ -254,9 +356,15 @@ def render_html(items, days, scanned):
     for r in items:
         age = (datetime.now(timezone.utc) - r["dt"]).days
         cls = "od" if age >= 2 else ""
+        if r["for_other"]:
+            tag = f" <span class='tag'>likely for {html.escape(r['for_other'])}</span>"
+        elif not r["direct"]:
+            tag = " <span class='tag'>you're only cc'd</span>"
+        else:
+            tag = ""
         rows.append(
             f"<tr class='{cls}'><td>{html.escape(r['who'])}</td>"
-            f"<td><strong>{html.escape(r['subject'])}</strong><br>"
+            f"<td><strong>{html.escape(r['subject'])}</strong>{tag}<br>"
             f"<span class='ask'>{html.escape(r['ask'])}</span></td>"
             f"<td>{r['dt'].astimezone().strftime('%b %d')}</td>"
             f"<td>{age}d</td></tr>")
@@ -283,6 +391,8 @@ font-size:.78em;border-bottom:2px solid #4fc3f7}}
 td{{padding:12px 14px;border-bottom:1px solid #2c3e50;vertical-align:top}}
 tr.od td{{background:rgba(231,76,60,.08)}}
 .ask{{color:#95a5a6;font-size:.9em}}
+.tag{{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:10px;
+background:#3a2f10;color:#ffcf6b;font-size:.72em;font-weight:600;vertical-align:middle}}
 .empty{{text-align:center;color:#95a5a6;padding:28px;font-style:italic}}
 footer{{text-align:center;padding:18px;color:#7f8c8d;font-size:.88em;
 border-top:1px solid #2c3e50;margin-top:28px}}
@@ -331,11 +441,23 @@ def main():
         fh.write(render_html(items, args.days, scanned))
 
     print(f"Scanned {scanned:,} messages. {len(items)} open request(s).\n")
-    for r in items:
-        age = (datetime.now(timezone.utc) - r["dt"]).days
-        flag = "!" if age >= 2 else " "
-        print(f" {flag} {age:>3}d  {r['addr']:<32} {r['subject'][:46]}")
-        print(f"          {r['ask'][:96]}")
+    direct = [r for r in items if r["direct"] and not r["for_other"]]
+    other = [r for r in items if not (r["direct"] and not r["for_other"])]
+
+    def show(rows):
+        for r in rows:
+            age = (datetime.now(timezone.utc) - r["dt"]).days
+            flag = "!" if age >= 2 else " "
+            tag = f" [for {r['for_other']}?]" if r["for_other"] else \
+                  ("" if r["direct"] else " [cc]")
+            print(f" {flag} {age:>3}d  {r['addr']:<30} {r['subject'][:44]}{tag}")
+            print(f"          {r['ask'][:100]}")
+
+    print(f"--- Addressed to you ({len(direct)}) ---")
+    show(direct)
+    if other:
+        print(f"\n--- Copied in / aimed at someone else ({len(other)}) ---")
+        show(other)
     print(f"\nWrote {args.out}")
 
 
